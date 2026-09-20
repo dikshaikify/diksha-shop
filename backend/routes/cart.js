@@ -1,27 +1,31 @@
 import { Router } from "express";
 import { requireAuth } from "./auth.js";
-import { db } from "../db.js";
+import { getDB } from "../db.js";
 import { products } from "../data.js";
 import { BadRequest, NotFound } from "../errors.js";
+import { ObjectId } from "mongodb";
 
 const router = Router();
 
-function getOrCreateCart(userId) {
-  let cart = db.prepare("SELECT * FROM carts WHERE user_id = ?").get(userId);
+async function getOrCreateCart(userId) {
+  const { carts } = getDB();
+  let cart = await carts.findOne({ userId });
   if (!cart) {
-    const info = db.prepare("INSERT INTO carts (user_id) VALUES (?)").run(userId);
-    cart = { id: info.lastInsertRowid, user_id: userId };
+    const doc = { userId, updatedAt: new Date() };
+    const result = await carts.insertOne(doc);
+    cart = { ...doc, _id: result.insertedId };
   }
   return cart;
 }
 
-function hydrateCart(cartId) {
-  const rows = db.prepare("SELECT * FROM cart_items WHERE cart_id = ? ORDER BY added_at DESC").all(cartId);
+async function hydrateCart(cartId) {
+  const { cartItems } = getDB();
+  const rows = await cartItems.find({ cartId }).sort({ addedAt: -1 }).toArray();
   const items = rows.map(r => {
-    const p = products.find(x => x.id === r.product_id);
+    const p = products.find(x => x.id === r.productId);
     if (!p) return null;
     return {
-      itemId: r.id,
+      itemId: r._id.toString(),
       id: p.id,
       title: p.title,
       image: p.image,
@@ -37,66 +41,72 @@ function hydrateCart(cartId) {
   return { items, totalQty, subtotal };
 }
 
-router.get("/cart", requireAuth, (req, res) => {
-  const cart = getOrCreateCart(req.user.uid);
-  res.json(hydrateCart(cart.id));
+router.get("/cart", requireAuth, async (req, res) => {
+  const cart = await getOrCreateCart(req.user.uid);
+  res.json(await hydrateCart(cart._id));
 });
 
-router.post("/cart", requireAuth, (req, res) => {
+router.post("/cart", requireAuth, async (req, res) => {
   const { productId, qty = 1 } = req.body || {};
   if (!productId) throw BadRequest("productId required");
   const product = products.find(p => p.id === Number(productId));
   if (!product) throw NotFound("Product not found");
   if (qty < 1) throw BadRequest("Quantity must be at least 1");
 
-  const cart = getOrCreateCart(req.user.uid);
-  const existing = db.prepare("SELECT * FROM cart_items WHERE cart_id = ? AND product_id = ?").get(cart.id, product.id);
+  const { cartItems, carts } = getDB();
+  const cart = await getOrCreateCart(req.user.uid);
+  const existing = await cartItems.findOne({ cartId: cart._id, productId: product.id });
 
   const newQty = (existing?.qty || 0) + Number(qty);
   if (newQty > product.stock) throw BadRequest("Only " + product.stock + " in stock");
 
   if (existing) {
-    db.prepare("UPDATE cart_items SET qty = ? WHERE id = ?").run(newQty, existing.id);
+    await cartItems.updateOne({ _id: existing._id }, { $set: { qty: newQty } });
   } else {
-    db.prepare("INSERT INTO cart_items (cart_id, product_id, qty) VALUES (?, ?, ?)").run(cart.id, product.id, Number(qty));
+    await cartItems.insertOne({ cartId: cart._id, productId: product.id, qty: Number(qty), addedAt: new Date() });
   }
-  db.prepare("UPDATE carts SET updated_at = datetime('now') WHERE id = ?").run(cart.id);
-  res.json(hydrateCart(cart.id));
+  await carts.updateOne({ _id: cart._id }, { $set: { updatedAt: new Date() } });
+  res.json(await hydrateCart(cart._id));
 });
 
-router.put("/cart/:itemId", requireAuth, (req, res) => {
+router.put("/cart/:itemId", requireAuth, async (req, res) => {
   const { qty } = req.body || {};
   if (qty < 1) throw BadRequest("Quantity must be at least 1");
-  const cart = getOrCreateCart(req.user.uid);
-  const item = db.prepare("SELECT * FROM cart_items WHERE id = ? AND cart_id = ?").get(req.params.itemId, cart.id);
+  const { cartItems } = getDB();
+  const cart = await getOrCreateCart(req.user.uid);
+  let item;
+  try { item = await cartItems.findOne({ _id: new ObjectId(req.params.itemId), cartId: cart._id }); }
+  catch { throw NotFound("Cart item not found"); }
   if (!item) throw NotFound("Cart item not found");
-  const product = products.find(p => p.id === item.product_id);
+  const product = products.find(p => p.id === item.productId);
   if (qty > product.stock) throw BadRequest("Only " + product.stock + " in stock");
-  db.prepare("UPDATE cart_items SET qty = ? WHERE id = ?").run(Number(qty), item.id);
-  res.json(hydrateCart(cart.id));
+  await cartItems.updateOne({ _id: item._id }, { $set: { qty: Number(qty) } });
+  res.json(await hydrateCart(cart._id));
 });
 
-router.delete("/cart/:itemId", requireAuth, (req, res) => {
-  const cart = getOrCreateCart(req.user.uid);
-  db.prepare("DELETE FROM cart_items WHERE id = ? AND cart_id = ?").run(req.params.itemId, cart.id);
-  res.json(hydrateCart(cart.id));
+router.delete("/cart/:itemId", requireAuth, async (req, res) => {
+  const { cartItems } = getDB();
+  const cart = await getOrCreateCart(req.user.uid);
+  try { await cartItems.deleteOne({ _id: new ObjectId(req.params.itemId), cartId: cart._id }); } catch {}
+  res.json(await hydrateCart(cart._id));
 });
 
-router.post("/cart/merge", requireAuth, (req, res) => {
+router.post("/cart/merge", requireAuth, async (req, res) => {
   const { items = [] } = req.body || {};
-  const cart = getOrCreateCart(req.user.uid);
+  const { cartItems } = getDB();
+  const cart = await getOrCreateCart(req.user.uid);
   for (const it of items) {
     const product = products.find(p => p.id === Number(it.id));
     if (!product) continue;
-    const existing = db.prepare("SELECT * FROM cart_items WHERE cart_id = ? AND product_id = ?").get(cart.id, product.id);
+    const existing = await cartItems.findOne({ cartId: cart._id, productId: product.id });
     const combined = Math.min(product.stock, (existing?.qty || 0) + Number(it.qty || 1));
     if (existing) {
-      db.prepare("UPDATE cart_items SET qty = ? WHERE id = ?").run(combined, existing.id);
+      await cartItems.updateOne({ _id: existing._id }, { $set: { qty: combined } });
     } else {
-      db.prepare("INSERT INTO cart_items (cart_id, product_id, qty) VALUES (?, ?, ?)").run(cart.id, product.id, combined);
+      await cartItems.insertOne({ cartId: cart._id, productId: product.id, qty: combined, addedAt: new Date() });
     }
   }
-  res.json(hydrateCart(cart.id));
+  res.json(await hydrateCart(cart._id));
 });
 
 export default router;

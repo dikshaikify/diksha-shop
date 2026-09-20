@@ -33,3 +33,6 @@ Thumbs.db
 # Backups
 *.broken.css
 styles.backup.css
+
+.env
+.env.local

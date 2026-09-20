@@ -1,23 +1,35 @@
 import bcrypt from "bcryptjs";
-import { db } from "./db.js";
+import { getDB } from "./db.js";
+import { ObjectId } from "mongodb";
 
-export function findUserByEmail(email) {
-  return db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+export async function findUserByEmail(email) {
+  const { users } = getDB();
+  return users.findOne({ email });
 }
-export function findUserById(id) {
-  return db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+export async function findUserById(id) {
+  const { users } = getDB();
+  try { return users.findOne({ _id: new ObjectId(id) }); }
+  catch { return null; }
 }
-export function createUser({ name, email, phone, password }) {
-  const hash = bcrypt.hashSync(password, 10);
-  const info = db
-    .prepare("INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)")
-    .run(name, email, phone || null, hash);
-  return findUserById(info.lastInsertRowid);
+export async function createUser({ name, email, phone, password }) {
+  const { users } = getDB();
+  const doc = {
+    name, email, phone: phone || null,
+    passwordHash: bcrypt.hashSync(password, 10),
+    createdAt: new Date()
+  };
+  const result = await users.insertOne(doc);
+  return { ...doc, _id: result.insertedId };
 }
 export function verifyPassword(plain, hash) {
   return bcrypt.compareSync(plain, hash);
 }
 export function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, email: u.email, phone: u.phone };
+  return {
+    id: u._id.toString(),
+    name: u.name,
+    email: u.email,
+    phone: u.phone
+  };
 }

@@ -1,35 +1,48 @@
 import { Router } from "express";
 import { requireAuth } from "./auth.js";
-import { db } from "../db.js";
+import { getDB } from "../db.js";
 import { NotFound } from "../errors.js";
+import { ObjectId } from "mongodb";
 
 const router = Router();
-
 const PROGRESSION = ["Return Requested", "Approved", "Pickup Scheduled", "Item Received", "Refund Processing", "Refunded"];
 
-router.get("/", requireAuth, (req, res) => {
-  const rows = db.prepare("SELECT * FROM returns WHERE user_id = ? ORDER BY id DESC").all(req.user.uid);
-  const enriched = rows.map(r => {
-    const order = db.prepare("SELECT order_number, total FROM orders WHERE id = ?").get(r.order_id);
-    return { ...r, orderNumber: order?.order_number, orderTotal: order?.total };
-  });
+router.get("/", requireAuth, async (req, res) => {
+  const { returns, orders } = getDB();
+  const rows = await returns.find({ userId: req.user.uid }).sort({ _id: -1 }).toArray();
+  const enriched = await Promise.all(rows.map(async r => {
+    const order = await orders.findOne({ _id: r.orderId });
+    return {
+      ...r,
+      id: r._id.toString(),
+      _id: undefined,
+      orderNumber: order?.orderNumber,
+      orderTotal: order?.total
+    };
+  }));
   res.json({ returns: enriched });
 });
 
-router.get("/:id", requireAuth, (req, res) => {
-  const r = db.prepare("SELECT * FROM returns WHERE id = ? AND user_id = ?").get(req.params.id, req.user.uid);
+router.get("/:id", requireAuth, async (req, res) => {
+  const { returns } = getDB();
+  let r;
+  try { r = await returns.findOne({ _id: new ObjectId(req.params.id), userId: req.user.uid }); }
+  catch { throw NotFound("Return not found"); }
   if (!r) throw NotFound("Return not found");
-  res.json({ return: r });
+  res.json({ return: { ...r, id: r._id.toString() } });
 });
 
-// Simulate advance to next status
-router.put("/:id/advance", requireAuth, (req, res) => {
-  const r = db.prepare("SELECT * FROM returns WHERE id = ? AND user_id = ?").get(req.params.id, req.user.uid);
+router.put("/:id/advance", requireAuth, async (req, res) => {
+  const { returns } = getDB();
+  let r;
+  try { r = await returns.findOne({ _id: new ObjectId(req.params.id), userId: req.user.uid }); }
+  catch { throw NotFound("Return not found"); }
   if (!r) throw NotFound("Return not found");
   const idx = PROGRESSION.indexOf(r.status);
   const next = idx < PROGRESSION.length - 1 ? PROGRESSION[idx + 1] : r.status;
-  db.prepare("UPDATE returns SET status = ?, updated_at = datetime('now') WHERE id = ?").run(next, r.id);
-  res.json({ return: db.prepare("SELECT * FROM returns WHERE id = ?").get(r.id) });
+  await returns.updateOne({ _id: r._id }, { $set: { status: next, updatedAt: new Date() } });
+  const updated = await returns.findOne({ _id: r._id });
+  res.json({ return: { ...updated, id: updated._id.toString() } });
 });
 
 export default router;

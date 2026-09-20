@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { randomUUID } from "crypto";
@@ -10,22 +11,15 @@ import returnRoutes from "./routes/returns.js";
 import { errorHandler } from "./errors.js";
 import { rateLimit } from "./rateLimit.js";
 import { logger } from "./logger.js";
+import { connectDB } from "./db.js";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-/* ---------- CORS ----------
-   Allow:
-   - local dev (http://localhost:3000)
-   - any *.onrender.com deploy (backend itself)
-   - any *.vercel.app deploy (Vercel gives a new subdomain per deploy)
-   - requests with no origin (curl, Postman, mobile apps)
-*/
 const ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://localhost:5173",
-  "https://diksha-shop-web.onrender.com",
-  "https://diksha-shop-api.onrender.com"
+  "https://dikshashop.vercel.app"
 ];
 
 function isAllowed(origin) {
@@ -38,15 +32,11 @@ function isAllowed(origin) {
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (isAllowed(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("CORS not allowed: " + origin));
-    }
+    if (isAllowed(origin)) callback(null, true);
+    else callback(new Error("CORS not allowed: " + origin));
   },
   credentials: true
 }));
-
 app.use(express.json({ limit: "1mb" }));
 
 app.use((req, _res, next) => {
@@ -76,4 +66,12 @@ app.use((req, _res, next) => {
 
 app.use(errorHandler);
 
-app.listen(PORT, () => logger.info({ port: PORT }, "server_started"));
+(async () => {
+  try {
+    await connectDB();
+    app.listen(PORT, () => logger.info({ port: PORT }, "server_started"));
+  } catch (err) {
+    logger.error({ err }, "startup_failed");
+    process.exit(1);
+  }
+})();
