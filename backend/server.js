@@ -57,6 +57,21 @@ app.use("/api/addresses", addressRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/returns", returnRoutes);
 
+app.get("/", (_req, res) => {
+  res.json({
+    name: "Diksha Shop API",
+    status: "running",
+    endpoints: {
+      health: "/health",
+      auth: "/api/auth/login",
+      products: "/api/products",
+      categories: "/api/categories",
+      cart: "/api/cart",
+      orders: "/api/orders"
+    }
+  });
+});
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use((req, _res, next) => {
