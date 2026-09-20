@@ -6,7 +6,7 @@ import {
 } from "./schemas.js";
 
 const ACCESS_KEY = "lqf.access";
-const REFRESH_KEY = "lqf.refresh";  
+const REFRESH_KEY = "lqf.refresh";
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 export const auth = {
@@ -22,7 +22,7 @@ async function refreshAccess() {
   if (refreshing) return refreshing;
   refreshing = (async () => {
     if (!auth.refresh) throw new Error("No refresh token");
-    const res = await fetch("/api/auth/refresh", {
+    const res = await fetch(API_BASE + "/api/auth/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken: auth.refresh })
@@ -35,8 +35,6 @@ async function refreshAccess() {
   })().finally(() => { refreshing = null; });
   return refreshing;
 }
-
-const API_BASE = import.meta.env.VITE_API_URL || "";
 
 async function req(path, { method = "GET", body, signal, retry = true, schema } = {}) {
   const headers = { "Content-Type": "application/json" };
