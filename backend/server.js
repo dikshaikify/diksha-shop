@@ -14,7 +14,39 @@ import { logger } from "./logger.js";
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors());
+/* ---------- CORS ----------
+   Allow:
+   - local dev (http://localhost:3000)
+   - any *.onrender.com deploy (backend itself)
+   - any *.vercel.app deploy (Vercel gives a new subdomain per deploy)
+   - requests with no origin (curl, Postman, mobile apps)
+*/
+const ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://diksha-shop-web.onrender.com",
+  "https://diksha-shop-api.onrender.com"
+];
+
+function isAllowed(origin) {
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  if (origin.endsWith(".vercel.app")) return true;
+  if (origin.endsWith(".onrender.com")) return true;
+  return false;
+}
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (isAllowed(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS not allowed: " + origin));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json({ limit: "1mb" }));
 
 app.use((req, _res, next) => {
