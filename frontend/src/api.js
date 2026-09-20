@@ -6,7 +6,8 @@ import {
 } from "./schemas.js";
 
 const ACCESS_KEY = "lqf.access";
-const REFRESH_KEY = "lqf.refresh";
+const REFRESH_KEY = "lqf.refresh";  
+const API_BASE = import.meta.env.VITE_API_URL || "";
 
 export const auth = {
   get access() { return sessionStorage.getItem(ACCESS_KEY); },
@@ -35,10 +36,13 @@ async function refreshAccess() {
   return refreshing;
 }
 
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
 async function req(path, { method = "GET", body, signal, retry = true, schema } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (auth.access) headers.Authorization = "Bearer " + auth.access;
-  const res = await fetch(path, { method, headers, signal, body: body ? JSON.stringify(body) : undefined });
+  const url = path.startsWith("http") ? path : API_BASE + path;
+  const res = await fetch(url, { method, headers, signal, body: body ? JSON.stringify(body) : undefined });
 
   if (res.status === 401 && retry && auth.refresh) {
     await refreshAccess();
